@@ -955,6 +955,147 @@ function calcSVG() {
   show('res-svg');
 }
 
+// ── 6. Würzekorrektur / High-Gravity ─────────────────────────────────────────
+function wkModeChange() {
+  const mode = document.getElementById('wk-mode').value;
+  document.getElementById('wk-field-zucker').style.display = (mode === 'zucker') ? 'block' : 'none';
+  document.getElementById('wk-ziel-label').textContent =
+    (mode === 'hg') ? 'Ziel-Anstellwürze (°Plato)' : 'Ziel-Stammwürze (°Plato)';
+}
+function calcWK() {
+  const mode = document.getElementById('wk-mode').value;
+  const V1   = +document.getElementById('wk-vol').value;
+  const P1   = +document.getElementById('wk-ist').value;
+  const P2   = +document.getElementById('wk-ziel').value;
+  if (!V1 || !P1 || !P2) return;
+  const V2 = V1 * P1 / P2;
+  if (mode === 'wasser' || mode === 'hg') {
+    const zugabe = V2 - V1;
+    document.getElementById('res-wk-label').textContent = zugabe >= 0 ? 'Wasserzugabe' : 'Würze entnehmen';
+    document.getElementById('res-wk-menge').textContent = fmt(Math.abs(zugabe));
+    document.getElementById('res-wk-unit').textContent  = 'l';
+  } else {
+    const eff           = +document.getElementById('wk-zucker').value;
+    const extrakt_fehlt = (P2 - P1) / 100 * V1;
+    const zucker_kg     = extrakt_fehlt / eff;
+    document.getElementById('res-wk-label').textContent = 'Zuckerzugabe';
+    document.getElementById('res-wk-menge').textContent = fmt(zucker_kg * 1000);
+    document.getElementById('res-wk-unit').textContent  = 'g';
+  }
+  document.getElementById('res-wk-vol').textContent = fmt(V2);
+  show('res-wk');
+}
+
+// ── 12. Mash Efficiency (Palmer) ─────────────────────────────────────────────
+function calcMashEff() {
+  const vol    = +document.getElementById('me-vol').value;
+  const plato  = +document.getElementById('me-plato').value;
+  const schuet = +document.getElementById('me-schuet').value;
+  const yield_ = +document.getElementById('me-yield').value / 100;
+  if (!vol || !plato || !schuet || !yield_) return;
+  const sg = 1 + plato / (258.6 - (plato / 258.2) * 227.1);
+  const extrakt_kg = vol * sg * (plato / 100);
+  const max_kg     = schuet * yield_;
+  const eff        = extrakt_kg / max_kg * 100;
+  document.getElementById('res-me-val').textContent = fmt(eff);
+  document.getElementById('res-me-kg').textContent  = fmt(extrakt_kg, 2);
+  document.getElementById('res-me-max').textContent = fmt(max_kg, 2);
+  show('res-me');
+}
+
+// ── 14. Hopfenbittere (IBU) – Formel nach KBH2 / MaischeMalzundMehr ──────────
+function ibuAusbeute(sw, hopBoilMin, naisoMin, T_end, form, totalBoilMin) {
+  const bigness    = 1.65 * Math.pow(0.000125, 0.004 * sw);
+  const fNaiso     = 0.046 * Math.exp(0.031 * T_end);
+  const tEff       = hopBoilMin + fNaiso * naisoMin;
+  const boilFaktor = (1 - Math.exp(-0.04 * tEff)) / 4.15;
+  const fForm      = (form === 'p') ? 1.1 : 1.0;
+  const fWBruch    = ((totalBoilMin - hopBoilMin) > 15) ? 1.1 : 1.0;
+  return bigness * boilFaktor * fForm * fWBruch;
+}
+function ibuCalcOne(alpha, mengeG, volL, hopBoilMin, totalBoilMin, naisoMin, T_end, sw, form) {
+  if (!alpha || !mengeG || !volL) return 0;
+  return 10 * mengeG * alpha / volL * ibuAusbeute(sw, hopBoilMin, naisoMin, T_end, form, totalBoilMin);
+}
+function ibuGetParams() {
+  return {
+    vol:       +document.getElementById('ibu-vol').value        || 20,
+    sw:        +document.getElementById('ibu-sw').value         || 12,
+    totalBoil: +document.getElementById('ibu-kochzeit').value   || 60,
+    naiso:     +document.getElementById('ibu-naiso').value      || 0,
+    naisoTemp: +document.getElementById('ibu-naiso-temp').value || 80,
+    ziel:      +document.getElementById('ibu-ziel').value       || 30,
+  };
+}
+function ibuGetRows() {
+  const rows = [];
+  document.querySelectorAll('.ibu-hop-row').forEach(row => {
+    rows.push({
+      alpha:    +row.querySelector('.ibu-alpha').value        || 0,
+      menge:    +row.querySelector('.ibu-menge').value        || 0,
+      kochzeit: +row.querySelector('.ibu-kochzeit-hop').value || 0,
+      form:      row.querySelector('.ibu-form').value,
+    });
+  });
+  return rows;
+}
+function ibuUpdateDisplay(rows) {
+  const p = ibuGetParams();
+  let total = 0;
+  document.querySelectorAll('.ibu-hop-row').forEach((row, i) => {
+    const ibu = ibuCalcOne(rows[i].alpha, rows[i].menge, p.vol,
+                           rows[i].kochzeit, p.totalBoil,
+                           p.naiso, p.naisoTemp, p.sw, rows[i].form);
+    total += ibu;
+    row.querySelector('.ibu-anteil').textContent =
+      (rows[i].menge > 0 && rows[i].alpha > 0) ? fmt(ibu, 1) : '–';
+  });
+  document.getElementById('res-ibu-val').textContent = fmt(total, 1);
+  const gu = p.sw * 2.5;
+  document.getElementById('res-ibu-bgu').textContent = gu > 0 ? fmt(total / gu, 2) : '–';
+  show('res-ibu');
+}
+function ibuRecalcHop() { ibuUpdateDisplay(ibuGetRows()); }
+function ibuApplyDefaultKochzeit() {
+  const def = +document.getElementById('ibu-kochzeit').value || 60;
+  document.querySelectorAll('.ibu-kochzeit-hop').forEach(el => { el.value = def; });
+  ibuRecalcHop();
+}
+function ibuInit() {
+  const p = ibuGetParams();
+  const rows = ibuGetRows();
+  const mengeEls = document.querySelectorAll('.ibu-menge');
+  const active = rows.filter(r => r.alpha > 0 && r.kochzeit > 0);
+  if (!active.length) return;
+  const ibuPerHop = p.ziel / active.length;
+  rows.forEach((r, i) => {
+    if (r.alpha > 0 && r.kochzeit > 0) {
+      const a = ibuAusbeute(p.sw, r.kochzeit, p.naiso, p.naisoTemp, r.form, p.totalBoil);
+      r.menge = a > 0 ? (ibuPerHop * p.vol) / (10 * r.alpha * a) : 0;
+      mengeEls[i].value = r.menge > 0 ? r.menge.toFixed(1) : '';
+    } else {
+      mengeEls[i].value = '';
+      r.menge = 0;
+    }
+  });
+  ibuUpdateDisplay(rows);
+}
+function ibuScaleToTarget() {
+  const p = ibuGetParams();
+  const rows = ibuGetRows();
+  const mengeEls = document.querySelectorAll('.ibu-menge');
+  const cur = rows.reduce((s, r) =>
+    s + ibuCalcOne(r.alpha, r.menge, p.vol, r.kochzeit,
+                   p.totalBoil, p.naiso, p.naisoTemp, p.sw, r.form), 0);
+  if (cur > 0) {
+    const scale = p.ziel / cur;
+    rows.forEach((r, i) => {
+      if (r.menge > 0) { r.menge *= scale; mengeEls[i].value = r.menge.toFixed(1); }
+    });
+  }
+  ibuUpdateDisplay(rows);
+}
+
 // ── 7. CO2-Druck (Henry) ──────────────────────────────────────────────────────
 function calcCO2() {
   const co2 = +document.getElementById('co2-gehalt').value;
@@ -1078,112 +1219,6 @@ function calcDreisatz() {
   document.getElementById('res-ds-formel').textContent = `${a1}% × ${b1}g ÷ ${a2}% = ${fmt(b2)}g`;
   show('res-ds');
 }
-
-// ── 14. Hopfenbittere (IBU) – Formel nach KBH2 / MaischeMalzundMehr ──────────
-
-function ibuAusbeute(sw, hopBoilMin, naisoMin, T_end, form, totalBoilMin) {
-  const bigness    = 1.65 * Math.pow(0.000125, 0.004 * sw);
-  const fNaiso     = 0.046 * Math.exp(0.031 * T_end);
-  const tEff       = hopBoilMin + fNaiso * naisoMin;
-  const boilFaktor = (1 - Math.exp(-0.04 * tEff)) / 4.15;
-  const fForm      = (form === 'p') ? 1.1 : 1.0;
-  const fWBruch    = ((totalBoilMin - hopBoilMin) > 15) ? 1.1 : 1.0;
-  return bigness * boilFaktor * fForm * fWBruch;
-}
-
-function ibuCalcOne(alpha, mengeG, volL, hopBoilMin, totalBoilMin, naisoMin, T_end, sw, form) {
-  if (!alpha || !mengeG || !volL) return 0;
-  return 10 * mengeG * alpha / volL * ibuAusbeute(sw, hopBoilMin, naisoMin, T_end, form, totalBoilMin);
-}
-
-function ibuGetParams() {
-  return {
-    vol:       +document.getElementById('ibu-vol').value        || 20,
-    sw:        +document.getElementById('ibu-sw').value         || 12,
-    totalBoil: +document.getElementById('ibu-kochzeit').value   || 60,
-    naiso:     +document.getElementById('ibu-naiso').value      || 0,
-    naisoTemp: +document.getElementById('ibu-naiso-temp').value || 80,
-    ziel:      +document.getElementById('ibu-ziel').value       || 30,
-  };
-}
-
-function ibuGetRows() {
-  const rows = [];
-  document.querySelectorAll('.ibu-hop-row').forEach(row => {
-    rows.push({
-      alpha:    +row.querySelector('.ibu-alpha').value        || 0,
-      menge:    +row.querySelector('.ibu-menge').value        || 0,
-      kochzeit: +row.querySelector('.ibu-kochzeit-hop').value || 0,
-      form:      row.querySelector('.ibu-form').value,
-    });
-  });
-  return rows;
-}
-
-function ibuUpdateDisplay(rows) {
-  const p = ibuGetParams();
-  let total = 0;
-  document.querySelectorAll('.ibu-hop-row').forEach((row, i) => {
-    const ibu = ibuCalcOne(rows[i].alpha, rows[i].menge, p.vol,
-                           rows[i].kochzeit, p.totalBoil,
-                           p.naiso, p.naisoTemp, p.sw, rows[i].form);
-    total += ibu;
-    row.querySelector('.ibu-anteil').textContent =
-      (rows[i].menge > 0 && rows[i].alpha > 0) ? fmt(ibu, 1) : '–';
-  });
-  document.getElementById('res-ibu-val').textContent = fmt(total, 1);
-  const gu = p.sw * 2.5;
-  document.getElementById('res-ibu-bgu').textContent = gu > 0 ? fmt(total / gu, 2) : '–';
-  show('res-ibu');
-}
-
-function ibuRecalcHop() { ibuUpdateDisplay(ibuGetRows()); }
-
-function ibuApplyDefaultKochzeit() {
-  const def = +document.getElementById('ibu-kochzeit').value || 60;
-  document.querySelectorAll('.ibu-kochzeit-hop').forEach(el => { el.value = def; });
-  ibuRecalcHop();
-}
-
-function ibuInit() {
-  const p = ibuGetParams();
-  const rows = ibuGetRows();
-  const mengeEls = document.querySelectorAll('.ibu-menge');
-  const active = rows.filter(r => r.alpha > 0 && r.kochzeit > 0);
-  if (!active.length) return;
-  const ibuPerHop = p.ziel / active.length;
-  rows.forEach((r, i) => {
-    if (r.alpha > 0 && r.kochzeit > 0) {
-      const a = ibuAusbeute(p.sw, r.kochzeit, p.naiso, p.naisoTemp, r.form, p.totalBoil);
-      r.menge = a > 0 ? (ibuPerHop * p.vol) / (10 * r.alpha * a) : 0;
-      mengeEls[i].value = r.menge > 0 ? r.menge.toFixed(1) : '';
-    } else {
-      mengeEls[i].value = '';
-      r.menge = 0;
-    }
-  });
-  ibuUpdateDisplay(rows);
-}
-
-function ibuScaleToTarget() {
-  const p = ibuGetParams();
-  const rows = ibuGetRows();
-  const mengeEls = document.querySelectorAll('.ibu-menge');
-  const cur = rows.reduce((s, r) =>
-    s + ibuCalcOne(r.alpha, r.menge, p.vol, r.kochzeit,
-                   p.totalBoil, p.naiso, p.naisoTemp, p.sw, r.form), 0);
-  if (cur > 0) {
-    const scale = p.ziel / cur;
-    rows.forEach((r, i) => {
-      if (r.menge > 0) {
-        r.menge *= scale;
-        mengeEls[i].value = r.menge.toFixed(1);
-      }
-    });
-  }
-  ibuUpdateDisplay(rows);
-}
-
 </script>
 </body>
 </html>
