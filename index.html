@@ -1000,7 +1000,9 @@ function calcSpeisewuerze() {
   // Vergärbarer Extrakt der Speise (g/l):
   // Aus Stammwürze → ca. 92% vergärbar (Näherung für Speise aus Hauptguss)
   // 1g Zucker → 0,469g CO2 (Gay-Lussac)
-  const extrakt_gl = stamm * 10 * 0.92; // g/l vergärbarer Extrakt
+  // Plato = Massenprozent -> g Extrakt pro Liter = P * 10 * Dichte (wie bei Wasser-/Zuckerkorrektur)
+  const sg_speise  = 1 + stamm / (258.6 - (stamm / 258.2) * 227.1);
+  const extrakt_gl = stamm * 10 * sg_speise * 0.92; // g/l vergärbarer Extrakt
   const co2_pro_l  = extrakt_gl * 0.469; // g CO2 pro Liter Speise
 
   // Bereits gelöstes CO2 bei Gärtemperatur (Henry)
@@ -1051,16 +1053,24 @@ function calcWK() {
   const P1   = +document.getElementById('wk-ist').value;
   const P2   = +document.getElementById('wk-ziel').value;
   if (!V1 || !P1 || !P2) return;
-  const V2 = V1 * P1 / P2;
+  let V2 = V1 * P1 / P2;
   if (mode === 'wasser' || mode === 'hg') {
-    const zugabe = V2 - V1;
+    // Plato ist Massenprozent: Verdünnung nach Masse rechnen (Würzedichte berücksichtigen),
+    // 1 l Wasser = 1 kg. Rein volumetrisch (V1*P1/P2) unterschätzt die Verdünnung.
+    const sg1    = 1 + P1 / (258.6 - (P1 / 258.2) * 227.1);
+    const zugabe = V1 * sg1 * (P1 / P2 - 1);
+    V2 = V1 + zugabe;
     document.getElementById('res-wk-label').textContent = zugabe >= 0 ? 'Wasserzugabe' : 'Würze entnehmen';
     document.getElementById('res-wk-menge').textContent = fmt(Math.abs(zugabe));
     document.getElementById('res-wk-unit').textContent  = 'l';
   } else {
     const eff           = +document.getElementById('wk-zucker').value;
-    const extrakt_fehlt = (P2 - P1) / 100 * V1;
-    const zucker_kg     = extrakt_fehlt / eff;
+    // Nach Masse: Zucker erhöht Extrakt UND Masse. Bilanz (e1 + s*eff) / (m1 + s) = P2/100.
+    const sg1       = 1 + P1 / (258.6 - (P1 / 258.2) * 227.1);
+    const m1        = V1 * sg1;                                   // Würzemasse in kg
+    const zucker_kg = m1 * (P2 - P1) / 100 / (eff - P2 / 100);
+    const sg2       = 1 + P2 / (258.6 - (P2 / 258.2) * 227.1);
+    V2 = (m1 + zucker_kg) / sg2;                                  // Endvolumen über die Dichte
     document.getElementById('res-wk-label').textContent = 'Zuckerzugabe';
     document.getElementById('res-wk-menge').textContent = fmt(zucker_kg * 1000);
     document.getElementById('res-wk-unit').textContent  = 'g';
